@@ -28,8 +28,8 @@ RUN npm ci --only=production
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 
-# Copy environment files
-COPY .env.beta .env.production ./
+# Copy environment files (using wildcard to make them optional if not present)
+COPY .env.* ./
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
