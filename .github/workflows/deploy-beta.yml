@@ -1,0 +1,70 @@
+name: Deploy to Cloud Run (Beta)
+
+on:
+  push:
+    branches:
+      - beta
+  workflow_dispatch: # Allows manual trigger
+
+env:
+  PROJECT_ID: da-mcp
+  SERVICE_NAME: da-bc-mcp-server-beta
+  REGION: us-central1
+
+jobs:
+  deploy:
+    name: Deploy Beta to Cloud Run
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCR
+        run: |
+          gcloud auth configure-docker
+
+      - name: Build and Push Container
+        run: |
+          gcloud builds submit \
+            --config cloudbuild.yaml \
+            --project ${{ env.PROJECT_ID }}
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image gcr.io/${{ env.PROJECT_ID }}/da-bc-mcp-server:latest \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --allow-unauthenticated \
+            --memory 512Mi \
+            --cpu 1 \
+            --max-instances 10 \
+            --min-instances 0 \
+            --set-env-vars "NODE_ENV=beta" \
+            --timeout 300 \
+            --project ${{ env.PROJECT_ID }}
+
+      - name: Get Service URL
+        id: get-url
+        run: |
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)' \
+            --project ${{ env.PROJECT_ID }})
+          echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_OUTPUT
+          echo "::notice title=Deployment Success::Beta service deployed to $SERVICE_URL"
+
+      - name: Test Deployment
+        run: |
+          echo "Testing deployment..."
+          curl -f ${{ steps.get-url.outputs.SERVICE_URL }} || echo "Health check endpoint not responding"
