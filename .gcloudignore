@@ -1,32 +1,12 @@
-# This file specifies files that are intentionally untracked by git and should
-# not be uploaded to Cloud Build
+# This file specifies files that are *untracked by git* that should not be uploaded to Cloud Build
+# By default, gcloud uses .gitignore, so we only need to specify additional exclusions
 
-.git
-.gitignore
-
-# Include .env files for runtime configuration
-!.env.beta
-!.env.production
-
-# Node modules (will be installed during build)
+# Don't upload node_modules (will be installed during build)
 node_modules/
 
-# Build artifacts (will be generated during build)
+# Don't upload build artifacts (will be generated during build)
 dist/
-*.tsbuildinfo
 
-# Development and documentation
-*.md
-README.md
+# Don't upload development files
 test-api.ts
 deploy-*.sh
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS files
-.DS_Store
-Thumbs.db
