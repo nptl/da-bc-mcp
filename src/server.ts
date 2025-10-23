@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -27,6 +28,10 @@ export class MCPServer {
     );
 
     this.setupHandlers();
+  }
+
+  getServer() {
+    return this.server;
   }
 
   private setupHandlers() {
