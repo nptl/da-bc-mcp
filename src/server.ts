@@ -1,6 +1,4 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -92,10 +90,7 @@ export class MCPServer {
   }
 
   async start() {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-
-    console.log('[MCP Server] Server running on stdio');
+    console.log('[MCP Server] Server initialized and ready for connections');
     console.log('[MCP Server] Available tools:');
     tools.forEach((tool) => {
       console.log(`  - ${tool.name}: ${tool.description}`);
