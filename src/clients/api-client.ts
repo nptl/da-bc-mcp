@@ -31,6 +31,49 @@ interface CustomerDetailsResponse {
   result: CustomerResult[];
 }
 
+interface OrderSummary {
+  id: string;
+  orderNo: string;
+  orderDate: string;
+  status: string;
+  subTotal: {
+    raw: number;
+    formatted: string;
+  };
+  total: {
+    raw: number;
+    formatted: string;
+  };
+  itemsCount: number;
+  items: {
+    name: string;
+    sku: string;
+    qty: number;
+  }[];
+}
+
+interface CustomerOrdersResponse {
+  statusCode: number;
+  status: string;
+  success: boolean;
+  message: string | null;
+  result: {
+    pageNumber: number;
+    pageSize: number;
+    totalRecords: number;
+    totalPages: number;
+    orders: any[];
+  };
+}
+
+interface OrderDetailsResponse {
+  statusCode: number;
+  status: string;
+  success: boolean;
+  message: string | null;
+  result: any;
+}
+
 class BetterCommerceClient {
   private authClient: AxiosInstance;
   private apiClient: AxiosInstance;
@@ -174,6 +217,211 @@ class BetterCommerceClient {
     } catch (error: any) {
       console.error('[API] Failed to get customer details:', error.response?.data || error.message);
       throw new Error(`Failed to fetch customer details: ${error.message}`);
+    }
+  }
+
+  /**
+   * Tool 3: Get Customer Orders
+   */
+  async getCustomerOrders(params: {
+    userId: string;
+    pageNumber?: number;
+    pageSize?: number;
+    orderStatus?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    sortBy?: string;
+  }): Promise<{
+    pageNumber: number;
+    pageSize: number;
+    totalRecords: number;
+    totalPages: number;
+    orders: OrderSummary[];
+  }> {
+    try {
+      const {
+        userId,
+        pageNumber = 1,
+        pageSize = 10,
+        orderStatus,
+        dateFrom,
+        dateTo,
+        sortBy
+      } = params;
+
+      // Build query parameters
+      const queryParams = new URLSearchParams({
+        pageNumber: pageNumber.toString(),
+        pageSize: pageSize.toString(),
+      });
+
+      if (orderStatus) queryParams.append('orderStatus', orderStatus);
+      if (dateFrom) queryParams.append('dateFrom', dateFrom);
+      if (dateTo) queryParams.append('dateTo', dateTo);
+      if (sortBy) queryParams.append('sortBy', sortBy);
+
+      const endpoint = `/api/v2/commerce/customer/${userId}/orders?${queryParams.toString()}`;
+      console.log('[API] Fetching customer orders:', endpoint);
+
+      const response = await this.apiClient.get<CustomerOrdersResponse>(endpoint);
+
+      const { success, result, statusCode } = response.data;
+
+      if (!success || statusCode !== 200) {
+        throw new Error('Failed to fetch customer orders');
+      }
+
+      // Extract relevant order information
+      const orders: OrderSummary[] = result.orders.map((order: any) => ({
+        id: order.id,
+        orderNo: order.orderNo,
+        orderDate: order.orderDate,
+        status: order.status,
+        subTotal: {
+          raw: order.subTotal?.raw || 0,
+          formatted: order.subTotal?.formatted || '',
+        },
+        total: {
+          raw: order.total?.raw || 0,
+          formatted: order.total?.formatted || '',
+        },
+        itemsCount: order.items?.length || 0,
+        items: (order.items || []).map((item: any) => ({
+          name: item.name,
+          sku: item.sku,
+          qty: item.qty,
+        })),
+      }));
+
+      console.log(`[API] Found ${orders.length} orders (page ${result.pageNumber} of ${result.totalPages})`);
+
+      return {
+        pageNumber: result.pageNumber,
+        pageSize: result.pageSize,
+        totalRecords: result.totalRecords,
+        totalPages: result.totalPages,
+        orders,
+      };
+    } catch (error: any) {
+      console.error('[API] Failed to get customer orders:', error.response?.data || error.message);
+      throw new Error(`Failed to fetch customer orders: ${error.message}`);
+    }
+  }
+
+  /**
+   * Tool 4: Get Order Details
+   */
+  async getOrderDetails(orderId: string, detailLevel: 'summary' | 'full' = 'summary'): Promise<any> {
+    try {
+      const endpoint = `/api/v2/commerce/order/${orderId}`;
+      console.log('[API] Fetching order details:', endpoint, 'Detail level:', detailLevel);
+
+      const response = await this.apiClient.get<OrderDetailsResponse>(endpoint);
+
+      const { success, result, statusCode } = response.data;
+
+      if (!success || statusCode !== 200) {
+        throw new Error('Failed to fetch order details');
+      }
+
+      // For full detail, return the complete order
+      if (detailLevel === 'full') {
+        console.log('[API] Returning full order details');
+        return result;
+      }
+
+      // For summary, extract key information
+      const order = result;
+      const summary = {
+        orderInfo: {
+          id: order.id,
+          orderNo: order.orderNo,
+          orderDate: order.orderDate,
+          status: order.status,
+          currency: order.currency,
+        },
+        customer: {
+          userId: order.userId,
+          email: order.customerEmail,
+          firstName: order.customerFirstName,
+          lastName: order.customerLastName,
+          phone: order.customerPhoneNo,
+        },
+        pricing: {
+          subTotal: {
+            raw: order.subTotal?.raw || 0,
+            formatted: order.subTotal?.formatted || '',
+          },
+          discount: {
+            raw: order.discount?.raw || 0,
+            formatted: order.discount?.formatted || '',
+          },
+          shippingCharge: {
+            raw: order.shippingCharge?.raw || 0,
+            formatted: order.shippingCharge?.formatted || '',
+          },
+          total: {
+            raw: order.total?.raw || 0,
+            formatted: order.total?.formatted || '',
+          },
+        },
+        items: (order.items || []).map((item: any) => ({
+          name: item.name,
+          sku: item.sku,
+          qty: item.qty,
+          price: {
+            raw: item.price?.raw || 0,
+            formatted: item.price?.formatted || '',
+          },
+          total: {
+            raw: item.total?.raw || 0,
+            formatted: item.total?.formatted || '',
+          },
+          image: item.image,
+        })),
+        shippingAddress: order.shippingAddress ? {
+          firstName: order.shippingAddress.firstName,
+          lastName: order.shippingAddress.lastName,
+          address1: order.shippingAddress.address1,
+          address2: order.shippingAddress.address2,
+          city: order.shippingAddress.city,
+          state: order.shippingAddress.state,
+          postCode: order.shippingAddress.postCode,
+          country: order.shippingAddress.country,
+          phoneNo: order.shippingAddress.phoneNo,
+        } : null,
+        billingAddress: order.billingAddress ? {
+          firstName: order.billingAddress.firstName,
+          lastName: order.billingAddress.lastName,
+          address1: order.billingAddress.address1,
+          address2: order.billingAddress.address2,
+          city: order.billingAddress.city,
+          state: order.billingAddress.state,
+          postCode: order.billingAddress.postCode,
+          country: order.billingAddress.country,
+          phoneNo: order.billingAddress.phoneNo,
+        } : null,
+        tracking: (order.deliveryPlans || []).map((plan: any) => ({
+          carrier: plan.shippingMethod,
+          trackingNumber: plan.trackingNumber,
+          status: plan.status,
+          estimatedDelivery: plan.estimatedDelivery,
+        })),
+        payment: order.payments && order.payments.length > 0 ? {
+          method: order.payments[0].paymentMethod,
+          status: order.payments[0].status,
+          amount: {
+            raw: order.payments[0].amount?.raw || 0,
+            formatted: order.payments[0].amount?.formatted || '',
+          },
+        } : null,
+      };
+
+      console.log('[API] Returning summarized order details');
+      return summary;
+    } catch (error: any) {
+      console.error('[API] Failed to get order details:', error.response?.data || error.message);
+      throw new Error(`Failed to fetch order details: ${error.message}`);
     }
   }
 }
