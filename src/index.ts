@@ -1,118 +1,83 @@
 #!/usr/bin/env node
 
-import { createServer } from 'http';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import express from 'express';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { MCPServer } from './server.js';
-
-// Store active SSE transports by session ID
-const transports: Record<string, SSEServerTransport> = {};
 
 async function main() {
   try {
     const mcpServer = new MCPServer();
     await mcpServer.start();
 
-    // Create HTTP server for both MCP SSE and health checks
-    const port = process.env.PORT || 8080;
-    const httpServer = createServer(async (req, res) => {
-      // CORS headers for cross-origin requests
+    // Create Express app
+    const app = express();
+    app.use(express.json());
+
+    // CORS middleware
+    app.use((req, res, next) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-      // Handle preflight requests
       if (req.method === 'OPTIONS') {
-        res.writeHead(200);
-        res.end();
+        res.sendStatus(200);
         return;
       }
+      next();
+    });
 
-      // Health check endpoints
-      if (req.url === '/' || req.url === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          status: 'healthy',
-          service: 'da-bc-mcp-server',
-          environment: process.env.NODE_ENV || 'development',
-          timestamp: new Date().toISOString(),
-          protocol: 'MCP over SSE',
-          endpoints: {
-            health: '/health',
-            sse: '/sse',
-            message: '/message'
-          }
-        }));
-        return;
-      }
+    // Health check endpoint
+    app.get(['/', '/health'], (req, res) => {
+      res.json({
+        status: 'healthy',
+        service: 'da-bc-mcp-server',
+        environment: process.env.NODE_ENV || 'development',
+        timestamp: new Date().toISOString(),
+        protocol: 'MCP Streamable HTTP',
+        endpoints: {
+          health: '/health',
+          mcp: '/mcp'
+        }
+      });
+    });
 
-      // MCP SSE connection endpoint (GET)
-      if ((req.url === '/sse' || req.url === '/mcp') && req.method === 'GET') {
-        console.log('[SSE] New MCP connection request');
+    // MCP Streamable HTTP endpoint
+    app.post('/mcp', async (req, res) => {
+      console.log('[MCP] New request received');
 
-        const transport = new SSEServerTransport('/message', res);
-        transports[transport.sessionId] = transport;
+      try {
+        // Create a new transport for each request to prevent request ID collisions
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+          enableJsonResponse: true
+        });
 
         // Clean up transport when connection closes
         res.on('close', () => {
-          console.log(`[SSE] Client disconnected: ${transport.sessionId}`);
-          delete transports[transport.sessionId];
+          console.log('[MCP] Request connection closed');
+          transport.close();
         });
 
+        // Connect server to transport
         await mcpServer.getServer().connect(transport);
 
-        console.log(`[SSE] MCP client connected: ${transport.sessionId}`);
-        return;
-      }
+        // Handle the MCP request
+        await transport.handleRequest(req, res, req.body);
 
-      // MCP message endpoint (POST)
-      if (req.url?.startsWith('/message') && req.method === 'POST') {
-        // Extract session ID from query parameters
-        const url = new URL(req.url, `http://${req.headers.host}`);
-        const sessionId = url.searchParams.get('sessionId');
-
-        if (!sessionId) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Missing sessionId parameter' }));
-          return;
+        console.log('[MCP] Request handled successfully');
+      } catch (error: any) {
+        console.error('[MCP] Error handling request:', error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: error.message });
         }
-
-        const transport = transports[sessionId];
-        if (!transport) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Session not found' }));
-          return;
-        }
-
-        // Read the request body
-        let body = '';
-        req.on('data', chunk => {
-          body += chunk.toString();
-        });
-
-        req.on('end', async () => {
-          try {
-            const message = JSON.parse(body);
-            console.log(`[SSE] Message received for session ${sessionId}:`, message.method);
-            await transport.handlePostMessage(req, res, message);
-          } catch (error: any) {
-            console.error('[SSE] Error handling message:', error);
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: error.message }));
-          }
-        });
-
-        return;
       }
-
-      // 404 for other routes
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found' }));
     });
 
-    httpServer.listen(port, () => {
+    const port = process.env.PORT || 8080;
+    app.listen(port, () => {
       console.log(`[HTTP] Server listening on port ${port}`);
       console.log(`[HTTP] Health endpoint: http://localhost:${port}/health`);
-      console.log(`[MCP] SSE endpoint: http://localhost:${port}/sse`);
+      console.log(`[MCP] Streamable HTTP endpoint: http://localhost:${port}/mcp`);
       console.log(`[MCP] Server running in ${process.env.NODE_ENV || 'development'} mode`);
     });
 
