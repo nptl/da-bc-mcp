@@ -4,6 +4,9 @@ import { createServer } from 'http';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { MCPServer } from './server.js';
 
+// Store active SSE transports by session ID
+const transports: Record<string, SSEServerTransport> = {};
+
 async function main() {
   try {
     const mcpServer = new MCPServer();
@@ -35,20 +38,69 @@ async function main() {
           protocol: 'MCP over SSE',
           endpoints: {
             health: '/health',
-            mcp: '/sse'
+            sse: '/sse',
+            message: '/message'
           }
         }));
         return;
       }
 
-      // MCP SSE endpoint
-      if (req.url === '/sse' || req.url === '/mcp') {
+      // MCP SSE connection endpoint (GET)
+      if ((req.url === '/sse' || req.url === '/mcp') && req.method === 'GET') {
         console.log('[SSE] New MCP connection request');
 
         const transport = new SSEServerTransport('/message', res);
+        transports[transport.sessionId] = transport;
+
+        // Clean up transport when connection closes
+        res.on('close', () => {
+          console.log(`[SSE] Client disconnected: ${transport.sessionId}`);
+          delete transports[transport.sessionId];
+        });
+
         await mcpServer.getServer().connect(transport);
 
-        console.log('[SSE] MCP client connected');
+        console.log(`[SSE] MCP client connected: ${transport.sessionId}`);
+        return;
+      }
+
+      // MCP message endpoint (POST)
+      if (req.url?.startsWith('/message') && req.method === 'POST') {
+        // Extract session ID from query parameters
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const sessionId = url.searchParams.get('sessionId');
+
+        if (!sessionId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Missing sessionId parameter' }));
+          return;
+        }
+
+        const transport = transports[sessionId];
+        if (!transport) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Session not found' }));
+          return;
+        }
+
+        // Read the request body
+        let body = '';
+        req.on('data', chunk => {
+          body += chunk.toString();
+        });
+
+        req.on('end', async () => {
+          try {
+            const message = JSON.parse(body);
+            console.log(`[SSE] Message received for session ${sessionId}:`, message.method);
+            await transport.handlePostMessage(req, res, message);
+          } catch (error: any) {
+            console.error('[SSE] Error handling message:', error);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+          }
+        });
+
         return;
       }
 
