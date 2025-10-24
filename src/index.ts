@@ -2,7 +2,11 @@
 
 import express from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { MCPServer } from './server.js';
+
+// Store active SSE transports by session ID (for backward compatibility)
+const sseTransports: Record<string, SSEServerTransport> = {};
 
 async function main() {
   try {
@@ -33,10 +37,11 @@ async function main() {
         service: 'da-bc-mcp-server',
         environment: process.env.NODE_ENV || 'development',
         timestamp: new Date().toISOString(),
-        protocol: 'MCP Streamable HTTP',
+        protocol: 'MCP Streamable HTTP + SSE (backward compatible)',
         endpoints: {
           health: '/health',
-          mcp: '/mcp'
+          mcp: '/mcp (Streamable HTTP - recommended)',
+          sse: '/sse (legacy SSE for OpenAI compatibility)'
         }
       });
     });
@@ -73,11 +78,64 @@ async function main() {
       }
     });
 
+    // SSE endpoint (legacy, for backward compatibility with older clients like OpenAI)
+    app.get('/sse', async (req, res) => {
+      console.log('[SSE] New connection request (legacy transport)');
+
+      try {
+        const transport = new SSEServerTransport('/message', res);
+        sseTransports[transport.sessionId] = transport;
+
+        // Clean up transport when connection closes
+        res.on('close', () => {
+          console.log(`[SSE] Client disconnected: ${transport.sessionId}`);
+          delete sseTransports[transport.sessionId];
+        });
+
+        await mcpServer.getServer().connect(transport);
+
+        console.log(`[SSE] Client connected: ${transport.sessionId}`);
+      } catch (error: any) {
+        console.error('[SSE] Error establishing connection:', error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: error.message });
+        }
+      }
+    });
+
+    // SSE message endpoint (legacy)
+    app.post('/message', async (req, res) => {
+      const sessionId = req.query.sessionId as string;
+
+      if (!sessionId) {
+        res.status(400).json({ error: 'Missing sessionId parameter' });
+        return;
+      }
+
+      const transport = sseTransports[sessionId];
+      if (!transport) {
+        res.status(404).json({ error: 'Session not found' });
+        return;
+      }
+
+      console.log(`[SSE] Message received for session ${sessionId}`);
+
+      try {
+        await transport.handlePostMessage(req, res, req.body);
+      } catch (error: any) {
+        console.error('[SSE] Error handling message:', error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: error.message });
+        }
+      }
+    });
+
     const port = process.env.PORT || 8080;
     app.listen(port, () => {
       console.log(`[HTTP] Server listening on port ${port}`);
       console.log(`[HTTP] Health endpoint: http://localhost:${port}/health`);
-      console.log(`[MCP] Streamable HTTP endpoint: http://localhost:${port}/mcp`);
+      console.log(`[MCP] Streamable HTTP endpoint: http://localhost:${port}/mcp (recommended)`);
+      console.log(`[MCP] SSE endpoint: http://localhost:${port}/sse (legacy, for OpenAI compatibility)`);
       console.log(`[MCP] Server running in ${process.env.NODE_ENV || 'development'} mode`);
     });
 
