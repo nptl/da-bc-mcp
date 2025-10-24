@@ -271,8 +271,48 @@ class BetterCommerceClient {
         throw new Error('Failed to fetch customer orders');
       }
 
+      // Log the result structure for debugging
+      console.log('[API] Customer orders result structure:', JSON.stringify(result, null, 2));
+
+      // Handle case where result might be an array directly or have different structure
+      let ordersList: any[] = [];
+      let pagination = {
+        pageNumber: 1,
+        pageSize: 10,
+        totalRecords: 0,
+        totalPages: 1,
+      };
+
+      // Check if result is an array directly
+      if (Array.isArray(result)) {
+        ordersList = result;
+        pagination.totalRecords = result.length;
+      }
+      // Check if result has orders property
+      else if (result && result.orders) {
+        ordersList = result.orders;
+        pagination = {
+          pageNumber: result.pageNumber || 1,
+          pageSize: result.pageSize || 10,
+          totalRecords: result.totalRecords || ordersList.length,
+          totalPages: result.totalPages || 1,
+        };
+      }
+      // Check if result has different property names
+      else if (result) {
+        console.log('[API] Unexpected result structure, returning raw result');
+        // Try to find an array property in result
+        const keys = Object.keys(result);
+        for (const key of keys) {
+          if (Array.isArray((result as any)[key])) {
+            ordersList = (result as any)[key];
+            break;
+          }
+        }
+      }
+
       // Extract relevant order information
-      const orders: OrderSummary[] = result.orders.map((order: any) => ({
+      const orders: OrderSummary[] = ordersList.map((order: any) => ({
         id: order.id,
         orderNo: order.orderNo,
         orderDate: order.orderDate,
@@ -293,13 +333,13 @@ class BetterCommerceClient {
         })),
       }));
 
-      console.log(`[API] Found ${orders.length} orders (page ${result.pageNumber} of ${result.totalPages})`);
+      console.log(`[API] Found ${orders.length} orders (page ${pagination.pageNumber} of ${pagination.totalPages})`);
 
       return {
-        pageNumber: result.pageNumber,
-        pageSize: result.pageSize,
-        totalRecords: result.totalRecords,
-        totalPages: result.totalPages,
+        pageNumber: pagination.pageNumber,
+        pageSize: pagination.pageSize,
+        totalRecords: pagination.totalRecords,
+        totalPages: pagination.totalPages,
         orders,
       };
     } catch (error: any) {
